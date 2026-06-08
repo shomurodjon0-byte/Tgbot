@@ -3,6 +3,8 @@ import time
 import telebot
 from groq import Groq
 from dotenv import load_dotenv
+# Katta matnlarni xavfsiz bo'lish uchun util yuklaymiz
+from telebot.util import split_string
 
 # ── 1. Muhit o'zgaruvchilarini yuklash ────────────────────────────────────────
 load_dotenv()
@@ -46,8 +48,8 @@ def system_prompt(lang: str) -> str:
             "Siz tajribali dasturlash mentorisiz. "
             "Javoblaringiz aniq, lo'nda va faqat O'ZBEK TILIDA bo'lsin. "
             "Kodlarni markdown bloklar ichida izohlar bilan yozing. "
-            "Muammoning sababini va best practice'larni tushuntiring."
-            "imloviy hatolarsiz aniq va ravon javob yozing."
+            "Muammoning sababini va best practice'larni tushuntiring. "
+            "Imloviy xatolarsiz aniq va ravon javob yozing."
         ),
         "ru": (
             "Вы опытный наставник по программированию. "
@@ -79,13 +81,31 @@ def ask_groq(prompt_text: str, lang: str) -> str:
     return response.choices[0].message.content
 
 
+def send_safe_message(chat_id: int, text: str, reply_to_message_id: int = None):
+    """Uzun matnlarni xavfsiz bo'laklab, Markdown rejimida yuboruvchi funksiya."""
+    # Telegram limiti 4096, biz Markdown belgilari ochilib yopilishi uchun 4000 zaxira qilamiz
+    if len(text) > 4000:
+        chunks = split_string(text, 4000)
+        for chunk in chunks:
+            try:
+                bot.send_message(chat_id, chunk, parse_mode="Markdown")
+            except Exception:
+                # Agar noto'g'ri markdown formati sababli xato bersa, oddiy matn qilib yuboradi
+                bot.send_message(chat_id, chunk)
+    else:
+        try:
+            bot.send_message(chat_id, text, parse_mode="Markdown", reply_to_message_id=reply_to_message_id)
+        except Exception:
+            bot.send_message(chat_id, text, reply_to_message_id=reply_to_message_id)
+
+
 # ── 6. /start va /help ────────────────────────────────────────────────────────
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
     profile = get_profile(message.from_user.id, message.from_user.first_name)
     text = (
         f"👋 Salom, *{profile['name']}*!\n\n"
-        "Men Groq AI asosida ishlaydigan dasturlash mentoriminan.\n\n"
+        "Men Groq AI asosida ishlaydigan dasturlash mentoriman.\n\n"
         "📌 *Buyruqlar:*\n"
         "• /lang — tilni o'zgartirish (🇺🇿 🇷🇺 🇬🇧)\n"
         "• /profile — profilingizni ko'rish\n"
@@ -142,9 +162,9 @@ def show_profile(message):
     lang_label = SUPPORTED_LANGS.get(profile["lang"], "—")
     text = (
         f"👤 *Profil*\n\n"
-        f"• Ism: *{profile['name']}*\n"
-        f"• Til: *{lang_label}*\n"
-        f"• Savollar soni: *{profile['questions_count']}*\n\n"
+        "• Ism: *{profile['name']}*\n"
+        "• Til: *{lang_label}*\n"
+        "• Savollar soni: *{profile['questions_count']}*\n\n"
         "Tilni o'zgartirish uchun /lang"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
@@ -190,7 +210,9 @@ def handle_document(message):
 
         answer = ask_groq(prompt, profile["lang"])
         profile["questions_count"] += 1
-        bot.reply_to(message, answer)
+        
+        # To'g'ridan-to'g'ri reply_to o'rniga xavfsiz funksiyadan foydalanamiz
+        send_safe_message(message.chat.id, answer, reply_to_message_id=message.message_id)
 
     except UnicodeDecodeError:
         bot.reply_to(message, "⚠️ Faylni o'qib bo'lmadi. Faqat matnli fayllar qabul qilinadi.")
@@ -208,7 +230,9 @@ def handle_message(message):
     try:
         answer = ask_groq(message.text, profile["lang"])
         profile["questions_count"] += 1
-        bot.reply_to(message, answer)
+        
+        # To'g'ridan-to'g'ri reply_to o'rniga xavfsiz funksiyadan foydalanamiz
+        send_safe_message(message.chat.id, answer, reply_to_message_id=message.message_id)
 
     except Exception as e:
         print(f"Xatolik: {e}")
